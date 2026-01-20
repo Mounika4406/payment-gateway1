@@ -4,45 +4,38 @@ A production-ready, asynchronous payment gateway enabling merchants to accept pa
 
 ---
 
-## 🏗 Architecture
+🏛 Architecture Flow
+Payment Request: Client sends a request to the API.
 
-The system follows an asynchronous, event-driven flow to handle high throughput and reliability.
+Queueing: API saves a "pending" record to DB and pushes a job to Redis. It returns 201 Created immediately.
 
-```mermaid
+Processing: The Worker Service picks up the job, simulates processing (5-10s), and updates the DB.
+
+Notification: If successful, a DeliverWebhookJob is triggered to notify the merchant.
+
+Code snippet
+
 sequenceDiagram
-    participant User as User/SDK
-    participant API as Gateway API
-    participant DB as PostgreSQL
-    participant Redis as Redis Queue
-    participant Worker as Worker Service
-    participant Merchant as Merchant Webhook
+    participant Client
+    participant API
+    participant Redis
+    participant Worker
+    participant DB
+    participant MerchantURL
 
-    %% Payment Flow
-    User->>API: POST /payments (Create)
-    API->>DB: Save Payment (Status: pending)
-    API->>Redis: Enqueue ProcessPaymentJob
-    API-->>User: Return 201 Created (Pending)
-    
-    %% Async Processing
-    Redis->>Worker: Pop ProcessPaymentJob
-    Worker->>Worker: Simulate Processing (5-10s)
-    alt Payment Success
-        Worker->>DB: Update Status: success
-        Worker->>Redis: Enqueue DeliverWebhookJob
-    else Payment Failed
-        Worker->>DB: Update Status: failed
-    end
+    Client->>API: POST /payments
+    API->>DB: Insert (Pending)
+    API->>Redis: Enqueue ProcessJob
+    API-->>Client: 201 Created (Immediate)
 
-    %% Webhook Delivery
-    Redis->>Worker: Pop DeliverWebhookJob
-    Worker->>Worker: Generate HMAC Signature
-    Worker->>Merchant: POST /webhook
+    Redis->>Worker: Pop Job
+    Worker->>DB: Update Status (Success/Failed)
     
-    alt Webhook Success
-        Worker->>DB: Log Success
-    else Webhook Failed
-        Worker->>DB: Log Retry (Exponential Backoff)
-        Worker->>Redis: Re-queue Job (Delayed)
+    rect rgb(240, 240, 240)
+    Note right of Worker: Webhook Flow
+    Worker->>Redis: Enqueue WebhookJob
+    Redis->>Worker: Pop WebhookJob
+    Worker->>MerchantURL: POST /webhook (HMAC Signed)
     end
 
 ```
